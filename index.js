@@ -1,5 +1,6 @@
 const express = require('express');
 const cors = require('cors');
+const jwt = require('jsonwebtoken');
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 const app = express();
 const port = process.env.PORT || 5000;
@@ -20,13 +21,40 @@ const client = new MongoClient(uri, {
     deprecationErrors: true,
   }
 });
-
+// verify jwt 
+const verifyJWT = (req, res, next) => {
+  console.log('hitting verify jwt');
+  const authorization = req.headers.authorization
+  if (!authorization) {
+    return res.status(401).send({ error: true, message: 'unauthorized access' })
+  }
+  const token = authorization.split(' ')[1];
+  console.log('token inside' , token);
+  jwt.verify(token, process.env.ACCESS_TOKEN_SECRET, (error, decoded)=>{
+    if (error) {
+      res.status(401).send({ error: true, message: 'unauthorized access' })
+    }
+    req.decoded = decoded;
+    next();
+  })
+}
 async function run() {
   try {
     // Connect the client to the server	(optional starting in v4.7)
     await client.connect();
     const servicesCollection = client.db('carDoctor').collection('services')
     const bookingCollection = client.db('carDoctor').collection('bookings')
+
+    // jwt 
+    app.post('/jwt', (req, res) => {
+      const user = req.body;
+      console.log(user);
+      const token = jwt.sign(user, process.env.ACCESS_TOKEN_SECRET, { expiresIn: '7d' })
+      res.send({ token })
+    })
+
+
+    // service routes
     // get services data 
     app.get('/services', async (req, res) => {
       const cursor = servicesCollection.find()
@@ -37,14 +65,19 @@ async function run() {
       const id = req.params.id;
       const query = { _id: new ObjectId(id) }
       const options = {
-        projection: { title: 1, price: 1, service_id: 1 , img: 1 }
+        projection: { title: 1, price: 1, service_id: 1, img: 1 }
       }
       const result = await servicesCollection.findOne(query, options)
       res.send(result)
     })
 
-    // bookings
-    app.get('/bookings', async (req, res) => {
+    // bookings routes
+    app.get('/bookings', verifyJWT, async (req, res) => {
+      const decoded = req.decoded;
+      console.log('came back after decoded', decoded);
+      if (decoded.email !== req.query.email) {
+        return res.status(403).send({error: 1, message: 'forbidden access'})
+      }
       let query = {}
       if (req.query?.email) {
         query = { email: req.query.email }
@@ -57,9 +90,9 @@ async function run() {
       const result = await bookingCollection.insertOne(booking)
       res.send(result)
     })
-    app.patch('/bookings/:id', async(req, res)=>{
+    app.patch('/bookings/:id', async (req, res) => {
       const id = req.params.id;
-      const filter = {_id: new ObjectId(id)}
+      const filter = { _id: new ObjectId(id) }
       const updatedBooking = req.body;
       const updatedDoc = {
         $set: {
@@ -70,9 +103,9 @@ async function run() {
       res.send(result)
 
     })
-    app.delete('/bookings/:id', async(req, res)=>{
+    app.delete('/bookings/:id', async (req, res) => {
       const id = req.params.id;
-      const query = {_id: new ObjectId(id)}
+      const query = { _id: new ObjectId(id) }
       const result = await bookingCollection.deleteOne(query)
       res.send(result)
     })
